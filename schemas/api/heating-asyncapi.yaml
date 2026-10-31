@@ -1,0 +1,217 @@
+asyncapi: 3.0.0
+info:
+  title: Heating Events
+  version: 1.0.0
+  description: >
+    Асинхронный обмен сервиса отопления через Kafka. Сервис публикует команды
+    устройствам, получает их результаты и действия сценариев. Операции описаны
+    с точки зрения сервиса отопления.
+defaultContentType: application/json
+servers:
+  kafka:
+    host: kafka:9092
+    protocol: kafka
+    description: Брокер событий
+channels:
+  deviceCommands:
+    address: device.commands
+    description: >
+      Команды устройствам. Сообщения публикует Outbox Publisher, читает шлюз
+      устройств. Ключ сообщения `device_id` сохраняет порядок команд одного
+      устройства.
+    messages:
+      deviceCommand:
+        $ref: '#/components/messages/DeviceCommand'
+  deviceCommandResults:
+    address: device.command-results
+    description: >
+      Результаты команд. Топик общий для сервисов управления, поэтому сервис
+      отопления обрабатывает только свои `command_id`. Доставка возможна
+      повторно, завершённая команда не меняется.
+    messages:
+      commandResult:
+        $ref: '#/components/messages/CommandResult'
+  scenarioActions:
+    address: scenario.actions
+    description: >
+      Действия сработавших сценариев. Сервис отопления обрабатывает только
+      сообщения с `module` равным `heating` и создаёт по ним команды.
+      `action_id` служит ключом идемпотентности.
+    messages:
+      scenarioAction:
+        $ref: '#/components/messages/ScenarioAction'
+operations:
+  publishDeviceCommand:
+    action: send
+    summary: Опубликовать команду устройству
+    channel:
+      $ref: '#/channels/deviceCommands'
+    messages:
+      - $ref: '#/channels/deviceCommands/messages/deviceCommand'
+  receiveCommandResult:
+    action: receive
+    summary: Получить результат команды
+    channel:
+      $ref: '#/channels/deviceCommandResults'
+    messages:
+      - $ref: '#/channels/deviceCommandResults/messages/commandResult'
+  receiveScenarioAction:
+    action: receive
+    summary: Получить действие сценария
+    channel:
+      $ref: '#/channels/scenarioActions'
+    messages:
+      - $ref: '#/channels/scenarioActions/messages/scenarioAction'
+components:
+  messages:
+    DeviceCommand:
+      name: DeviceCommand
+      title: Команда устройству
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/DeviceCommand'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: device_id
+          bindingVersion: 0.5.0
+      examples:
+        - name: turnOn
+          summary: Включить отопление
+          headers: {}
+          payload:
+            command_id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+            device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            protocol: MQTT
+            action: TURN_ON
+            params: {}
+            expires_at: '2026-11-01T10:01:00Z'
+    CommandResult:
+      name: CommandResult
+      title: Результат команды
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/CommandResult'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: device_id
+          bindingVersion: 0.5.0
+      examples:
+        - name: succeeded
+          summary: Устройство выполнило команду
+          headers: {}
+          payload:
+            command_id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+            device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            status: SUCCEEDED
+            occurred_at: '2026-11-01T10:00:02Z'
+        - name: expired
+          summary: Срок команды истёк до доставки
+          headers: {}
+          payload:
+            command_id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+            device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            status: EXPIRED
+            occurred_at: '2026-11-01T10:01:03Z'
+    ScenarioAction:
+      name: ScenarioAction
+      title: Действие сценария
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ScenarioAction'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: device_id
+          bindingVersion: 0.5.0
+      examples:
+        - name: eveningHeating
+          summary: Включить отопление по расписанию
+          headers: {}
+          payload:
+            action_id: 7d9e4b12-5c3a-4e0f-8b21-9f6a1c2d3e45
+            scenario_id: c1a2b3d4-e5f6-4789-a012-3456789abcde
+            device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            module: heating
+            action: TURN_ON
+            params: {}
+            occurred_at: '2026-11-01T18:00:00Z'
+  schemas:
+    Action:
+      type: string
+      description: Действие над отоплением
+      enum: [TURN_ON, TURN_OFF]
+    DeviceCommand:
+      type: object
+      required: [command_id, device_id, protocol, action, expires_at]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+          description: Устройство пропускает уже выполненный command_id
+        device_id:
+          type: string
+          format: uuid
+        protocol:
+          type: string
+          description: Протокол устройства, по которому шлюз выбирает адаптер
+          enum: [MQTT, HTTP]
+        action:
+          $ref: '#/components/schemas/Action'
+        params:
+          type: object
+          description: Параметры действия
+        expires_at:
+          type: string
+          format: date-time
+          description: После этого момента шлюз не отправляет команду устройству
+    CommandResult:
+      type: object
+      required: [command_id, device_id, status, occurred_at]
+      properties:
+        command_id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: Итог выполнения. TIMED_OUT сервис назначает сам, в топик он не попадает
+          enum: [SUCCEEDED, FAILED, EXPIRED]
+        occurred_at:
+          type: string
+          format: date-time
+    ScenarioAction:
+      type: object
+      required: [action_id, scenario_id, device_id, module, action, occurred_at]
+      properties:
+        action_id:
+          type: string
+          format: uuid
+        scenario_id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        module:
+          type: string
+          description: Код модуля из сущности Module
+          enum: [heating, lighting, gates]
+        action:
+          type: string
+          description: Действие. Для модуля heating — TURN_ON или TURN_OFF
+        params:
+          type: object
+          description: Параметры действия
+        occurred_at:
+          type: string
+          format: date-time

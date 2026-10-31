@@ -1,0 +1,180 @@
+@startuml er-diagram
+title Тёплый дом — ER-диаграмма (To-Be)
+
+hide circle
+skinparam linetype ortho
+skinparam packageStyle rectangle
+
+legend right
+    Сплошная линия — внешний ключ внутри одной базы.
+    Пунктирная линия — логическая ссылка между базами
+    разных сервисов: связь хранится как идентификатор,
+    без внешнего ключа.
+end legend
+
+package "БД пользователей" {
+    entity "User" as user {
+        * id : uuid <<PK>>
+        --
+        * email : varchar <<UNIQUE>>
+        * password_hash : varchar
+        * name : varchar
+        * created_at : timestamptz
+    }
+
+    entity "Home" as home {
+        * id : uuid <<PK>>
+        --
+        * owner_id : uuid <<FK>>
+        * name : varchar
+        address : varchar
+        * timezone : varchar
+        * created_at : timestamptz
+    }
+
+    entity "HomeAccess" as home_access {
+        * home_id : uuid <<PK, FK>>
+        * user_id : uuid <<PK, FK>>
+        --
+        * role : varchar
+        * granted_at : timestamptz
+    }
+}
+
+package "БД реестра" {
+    entity "Module" as module {
+        * id : uuid <<PK>>
+        --
+        * code : varchar <<UNIQUE>>
+        * name : varchar
+        description : text
+    }
+
+    entity "HomeModule" as home_module {
+        * home_id : uuid <<PK, логическая ссылка>>
+        * module_id : uuid <<PK, FK>>
+        --
+        * enabled : boolean
+        * connected_at : timestamptz
+    }
+
+    entity "DeviceType" as device_type {
+        * id : uuid <<PK>>
+        --
+        * module_id : uuid <<FK>>
+        * name : varchar
+        manufacturer : varchar
+        * protocol : varchar
+        * capabilities : jsonb
+    }
+
+    entity "Room" as room {
+        * id : uuid <<PK>>
+        --
+        * home_id : uuid <<логическая ссылка>>
+        * name : varchar
+    }
+
+    entity "Device" as device {
+        * id : uuid <<PK>>
+        --
+        * type_id : uuid <<FK>>
+        home_id : uuid <<логическая ссылка>>
+        room_id : uuid <<FK>>
+        * serial_number : varchar <<UNIQUE>>
+        claim_code_hash : varchar
+        name : varchar
+        * status : varchar
+        last_seen_at : timestamptz
+        * created_at : timestamptz
+    }
+}
+
+package "БД телеметрии" {
+    entity "TelemetryData" as telemetry {
+        * device_id : uuid <<PK, логическая ссылка>>
+        * metric : varchar <<PK>>
+        * occurred_at : timestamptz <<PK>>
+        --
+        * value : double precision
+        * unit : varchar
+        * received_at : timestamptz
+    }
+}
+
+package "БД отопления" {
+    entity "Command" as command {
+        * id : uuid <<PK>>
+        --
+        * device_id : uuid <<логическая ссылка>>
+        * action : varchar
+        * status : varchar
+        * idempotency_key : varchar <<UNIQUE>>
+        * expires_at : timestamptz
+        * created_at : timestamptz
+        finished_at : timestamptz
+    }
+
+    entity "HeatingState" as heating_state {
+        * device_id : uuid <<PK, логическая ссылка>>
+        --
+        * desired : varchar
+        reported : varchar
+        * updated_at : timestamptz
+    }
+
+    entity "OutboxMessage" as outbox {
+        * id : uuid <<PK>>
+        --
+        * command_id : uuid <<FK>>
+        * topic : varchar
+        * payload : jsonb
+        * created_at : timestamptz
+        published_at : timestamptz
+    }
+}
+
+package "БД сценариев" {
+    entity "Scenario" as scenario {
+        * id : uuid <<PK>>
+        --
+        * home_id : uuid <<логическая ссылка>>
+        * name : varchar
+        * trigger : jsonb
+        * enabled : boolean
+        * created_at : timestamptz
+    }
+
+    entity "ScenarioAction" as scenario_action {
+        * id : uuid <<PK>>
+        --
+        * scenario_id : uuid <<FK>>
+        * device_id : uuid <<логическая ссылка>>
+        * action : varchar
+        params : jsonb
+        * position : integer
+    }
+}
+
+user ||--o{ home : владеет
+user ||--o{ home_access
+home ||--o{ home_access
+
+module ||--o{ home_module
+module ||--o{ device_type
+device_type ||--o{ device
+room |o--o{ device
+
+home ||..o{ home_module
+home ||..o{ room
+home |o..o{ device
+home ||..o{ scenario
+
+device ||..o{ telemetry
+device ||..o{ command
+device ||..o| heating_state
+device ||..o{ scenario_action
+
+command ||--o{ outbox
+scenario ||--|{ scenario_action
+@enduml

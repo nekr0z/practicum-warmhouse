@@ -1,0 +1,376 @@
+openapi: 3.0.3
+info:
+  title: Heating API
+  version: 1.0.0
+  description: >
+    REST API сервиса отопления. Запросы проходят через API Gateway, который
+    проверяет JWT. Сервис проверяет, что дом устройства входит в список домов
+    пользователя из токена.
+
+    Команда выполняется асинхронно: сервис сохраняет её и сразу отвечает `202`,
+    а итоговый статус клиент получает отдельным запросом.
+servers:
+  - url: https://api.warmhouse.example/api/v1
+    description: Адрес API Gateway (пример)
+tags:
+  - name: Commands
+    description: Команды отоплению
+  - name: State
+    description: Состояние отопления
+security:
+  - bearerAuth: []
+paths:
+  /heating/devices/{device_id}/commands:
+    post:
+      tags: [Commands]
+      operationId: createCommand
+      summary: Отправить команду устройству
+      description: >
+        Создаёт команду включения или выключения. Повторный запрос с тем же
+        `Idempotency-Key` не создаёт новую команду и возвращает уже созданную.
+        Если срок `expires_at` истёк до доставки, команда не выполняется.
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Уникальный ключ запроса, который создаёт клиент
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          example: 6f1c2a54-3b1e-4a35-9a55-0d6a4e7b9c11
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommandRequest'
+            examples:
+              turnOn:
+                summary: Включить отопление
+                value:
+                  action: TURN_ON
+              turnOff:
+                summary: Выключить отопление
+                value:
+                  action: TURN_OFF
+      responses:
+        '202':
+          description: Команда принята к выполнению
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+              examples:
+                accepted:
+                  summary: Новая команда
+                  value:
+                    id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    action: TURN_ON
+                    status: PENDING
+                    expires_at: '2026-11-01T10:01:00Z'
+                    created_at: '2026-11-01T10:00:00Z'
+                    finished_at: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '409':
+          description: Устройство не может выполнить команду
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                deviceOffline:
+                  summary: Устройство не в сети
+                  value:
+                    code: DEVICE_OFFLINE
+                    message: Устройство не в сети
+                wrongType:
+                  summary: Устройство не относится к отоплению
+                  value:
+                    code: DEVICE_TYPE_NOT_SUPPORTED
+                    message: Устройство не относится к модулю отопления
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Сервис реестра устройств недоступен, команда не создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                registryUnavailable:
+                  summary: Реестр недоступен
+                  value:
+                    code: REGISTRY_UNAVAILABLE
+                    message: Не удалось проверить устройство, повторите запрос
+  /heating/commands/{command_id}:
+    get:
+      tags: [Commands]
+      operationId: getCommand
+      summary: Получить статус команды
+      parameters:
+        - name: command_id
+          in: path
+          required: true
+          description: Идентификатор команды
+          schema:
+            type: string
+            format: uuid
+          example: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+      responses:
+        '200':
+          description: Команда найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Command'
+              examples:
+                pending:
+                  summary: Команда выполняется
+                  value:
+                    id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    action: TURN_ON
+                    status: PENDING
+                    expires_at: '2026-11-01T10:01:00Z'
+                    created_at: '2026-11-01T10:00:00Z'
+                    finished_at: null
+                succeeded:
+                  summary: Команда выполнена
+                  value:
+                    id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    action: TURN_ON
+                    status: SUCCEEDED
+                    expires_at: '2026-11-01T10:01:00Z'
+                    created_at: '2026-11-01T10:00:00Z'
+                    finished_at: '2026-11-01T10:00:02Z'
+                timedOut:
+                  summary: Устройство не ответило
+                  value:
+                    id: 0b6f7a3e-8f0c-4f6e-9a57-2a1c5d3e7b10
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    action: TURN_ON
+                    status: TIMED_OUT
+                    expires_at: '2026-11-01T10:01:00Z'
+                    created_at: '2026-11-01T10:00:00Z'
+                    finished_at: '2026-11-01T10:01:05Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Команда не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                commandNotFound:
+                  summary: Неизвестная команда
+                  value:
+                    code: COMMAND_NOT_FOUND
+                    message: Команда не найдена
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /heating/devices/{device_id}/state:
+    get:
+      tags: [State]
+      operationId: getState
+      summary: Получить состояние отопления
+      description: >
+        Возвращает состояние, которое ожидает система (`desired`), и состояние,
+        подтверждённое устройством (`reported`). Пока команд не было подтверждено,
+        `reported` равно `null`.
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Состояние найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeatingState'
+              examples:
+                confirmed:
+                  summary: Устройство подтвердило состояние
+                  value:
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    desired: TURN_ON
+                    reported: TURN_ON
+                    updated_at: '2026-11-01T10:00:02Z'
+                unconfirmed:
+                  summary: Подтверждения ещё нет
+                  value:
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    desired: TURN_ON
+                    reported: null
+                    updated_at: '2026-11-01T10:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      description: Идентификатор устройства
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  schemas:
+    Action:
+      type: string
+      description: Действие над отоплением
+      enum: [TURN_ON, TURN_OFF]
+    CommandStatus:
+      type: string
+      description: Статус команды
+      enum: [PENDING, SUCCEEDED, FAILED, EXPIRED, TIMED_OUT]
+    CreateCommandRequest:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          $ref: '#/components/schemas/Action'
+    Command:
+      type: object
+      required: [id, device_id, action, status, expires_at, created_at, finished_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+          format: uuid
+        action:
+          $ref: '#/components/schemas/Action'
+        status:
+          $ref: '#/components/schemas/CommandStatus'
+        expires_at:
+          type: string
+          format: date-time
+          description: Момент, после которого команда не будет доставлена устройству
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Момент завершения команды. Пока команда выполняется, равен null
+    HeatingState:
+      type: object
+      required: [device_id, desired, reported, updated_at]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        desired:
+          $ref: '#/components/schemas/Action'
+        reported:
+          type: string
+          enum: [TURN_ON, TURN_OFF, null]
+          nullable: true
+          description: Подтверждённое устройством состояние
+        updated_at:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки
+        message:
+          type: string
+          description: Описание ошибки
+  responses:
+    BadRequest:
+      description: Некорректный запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidAction:
+              summary: Неизвестное действие
+              value:
+                code: INVALID_REQUEST
+                message: 'Поле action должно быть TURN_ON или TURN_OFF'
+            missingKey:
+              summary: Нет заголовка Idempotency-Key
+              value:
+                code: INVALID_REQUEST
+                message: Заголовок Idempotency-Key обязателен
+    Unauthorized:
+      description: Токен отсутствует или недействителен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unauthorized:
+              summary: Нет действительного токена
+              value:
+                code: UNAUTHORIZED
+                message: Требуется авторизация
+    Forbidden:
+      description: Дом устройства не входит в список домов пользователя
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            forbidden:
+              summary: Чужое устройство
+              value:
+                code: FORBIDDEN
+                message: Нет доступа к этому устройству
+    DeviceNotFound:
+      description: Устройство не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            deviceNotFound:
+              summary: Неизвестное устройство
+              value:
+                code: DEVICE_NOT_FOUND
+                message: Устройство не найдено
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            internalError:
+              summary: Внутренняя ошибка
+              value:
+                code: INTERNAL_ERROR
+                message: Внутренняя ошибка сервера
