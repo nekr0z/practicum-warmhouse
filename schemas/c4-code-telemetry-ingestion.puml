@@ -1,0 +1,79 @@
+@startuml c4-code-telemetry-ingestion
+title Сервис телеметрии — приём показаний (диаграмма классов)
+
+skinparam classAttributeIconSize 0
+hide empty members
+
+class ReadingConsumer {
+    -reader *kafka.Reader
+    -validator ReadingValidator
+    -writer BatchWriter
+    -pending []kafka.Message
+    +Run(ctx) error
+    -commitPending(ctx) error
+}
+
+class ReadingValidator {
+    -units UnitConverter
+    +Validate(raw RawReading) (Reading, error)
+}
+
+class UnitConverter {
+    +ToBaseUnit(metric string, value float64, unit string) (float64, string, error)
+}
+
+class BatchWriter {
+    -repository ReadingRepository
+    -buffer []Reading
+    -maxSize int
+    -flushInterval time.Duration
+    +Add(reading Reading) bool
+    +Flush(ctx) error
+}
+
+interface ReadingRepository <<interface>> {
+    +SaveBatch(ctx, readings []Reading) error
+}
+
+class TimescaleReadingRepository {
+    -pool *pgxpool.Pool
+    +SaveBatch(ctx, readings []Reading) error
+}
+
+class RawReading {
+    +DeviceID string
+    +Metric string
+    +Value float64
+    +Unit string
+    +OccurredAt time.Time
+}
+
+class Reading {
+    +DeviceID string
+    +Metric string
+    +Value float64
+    +Unit string
+    +OccurredAt time.Time
+}
+
+ReadingConsumer --> ReadingValidator
+ReadingConsumer --> BatchWriter
+ReadingValidator --> UnitConverter
+BatchWriter --> ReadingRepository
+ReadingRepository <|.. TimescaleReadingRepository
+ReadingConsumer ..> RawReading
+ReadingValidator ..> Reading
+ReadingRepository ..> Reading
+
+note right of ReadingConsumer
+    Смещение в Kafka фиксируется только после успешного
+    Flush, поэтому при сбое показания читаются повторно,
+    а не теряются. Некорректное показание пропускается.
+end note
+
+note bottom of ReadingRepository
+    SaveBatch использует ON CONFLICT DO NOTHING по ключу
+    (DeviceID, Metric, OccurredAt), поэтому повторное
+    чтение не создаёт дубликатов.
+end note
+@enduml

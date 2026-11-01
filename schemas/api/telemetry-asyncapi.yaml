@@ -1,0 +1,77 @@
+asyncapi: 3.0.0
+info:
+  title: Telemetry Events
+  version: 1.0.0
+  description: >
+    Приём показаний сервисом телеметрии через Kafka. Сообщения публикует шлюз
+    устройств. Операции описаны с точки зрения сервиса телеметрии.
+defaultContentType: application/json
+servers:
+  kafka:
+    host: kafka:9092
+    protocol: kafka
+    description: Брокер событий
+channels:
+  deviceTelemetry:
+    address: device.telemetry
+    description: >
+      Показания устройств. Ключ сообщения `device_id` сохраняет порядок показаний
+      одного устройства. Доставка возможна повторно: дубликаты отсекаются по
+      `device_id`, `metric` и `occurred_at`.
+    messages:
+      telemetryReading:
+        $ref: '#/components/messages/TelemetryReading'
+operations:
+  receiveTelemetryReading:
+    action: receive
+    summary: Получить показание устройства
+    channel:
+      $ref: '#/channels/deviceTelemetry'
+    messages:
+      - $ref: '#/channels/deviceTelemetry/messages/telemetryReading'
+components:
+  messages:
+    TelemetryReading:
+      name: TelemetryReading
+      title: Показание устройства
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TelemetryReading'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: device_id
+          bindingVersion: 0.5.0
+      examples:
+        - name: temperature
+          summary: Новое измерение температуры
+          headers: {}
+          payload:
+            device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+            metric: temperature
+            value: 21.5
+            unit: '°C'
+            occurred_at: '2026-11-01T10:00:00Z'
+  schemas:
+    TelemetryReading:
+      type: object
+      required: [device_id, metric, value, unit, occurred_at]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        metric:
+          type: string
+          description: Название метрики
+        value:
+          type: number
+          format: double
+        unit:
+          type: string
+          description: Единица измерения
+        occurred_at:
+          type: string
+          format: date-time
+          description: Момент измерения на устройстве

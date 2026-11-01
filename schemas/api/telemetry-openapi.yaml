@@ -1,0 +1,308 @@
+openapi: 3.0.3
+info:
+  title: Telemetry API
+  version: 1.0.0
+  description: >
+    REST API сервиса телеметрии. Запросы проходят через API Gateway, который
+    проверяет JWT. Сервис определяет дом устройства в реестре и отдаёт данные
+    только по устройствам домов из токена.
+servers:
+  - url: https://api.warmhouse.example/api/v1
+    description: Адрес API Gateway (пример)
+tags:
+  - name: Readings
+    description: Показания устройств
+security:
+  - bearerAuth: []
+paths:
+  /telemetry/devices/{device_id}/latest:
+    get:
+      tags: [Readings]
+      operationId: getLatestReadings
+      summary: Получить последние показания устройства
+      description: Возвращает последнее показание по каждой метрике устройства.
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Показания найдены. Если их ещё нет, список пуст
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestReadings'
+              examples:
+                temperature:
+                  summary: Датчик температуры
+                  value:
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    readings:
+                      - metric: temperature
+                        value: 21.5
+                        unit: '°C'
+                        occurred_at: '2026-11-01T10:00:00Z'
+                empty:
+                  summary: Показаний ещё нет
+                  value:
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    readings: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/RegistryUnavailable'
+  /telemetry/devices/{device_id}/history:
+    get:
+      tags: [Readings]
+      operationId: getReadingsHistory
+      summary: Получить историю показаний за период
+      description: >
+        Возвращает показания одной метрики за период `[from, to)`. Если указан
+        `interval`, значения усредняются по этому интервалу.
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - name: metric
+          in: query
+          required: true
+          description: Название метрики
+          schema:
+            type: string
+          example: temperature
+        - name: from
+          in: query
+          required: true
+          description: Начало периода, включительно
+          schema:
+            type: string
+            format: date-time
+          example: '2026-11-01T00:00:00Z'
+        - name: to
+          in: query
+          required: true
+          description: Конец периода, не включая. Должен быть позже from
+          schema:
+            type: string
+            format: date-time
+          example: '2026-11-01T03:00:00Z'
+        - name: interval
+          in: query
+          required: false
+          description: Интервал усреднения. Если не указан, возвращаются исходные показания
+          schema:
+            type: string
+            enum: [1m, 1h, 1d]
+          example: 1h
+      responses:
+        '200':
+          description: История за период. Если показаний нет, список пуст
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingsHistory'
+              examples:
+                hourly:
+                  summary: Средние значения по часам
+                  value:
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    metric: temperature
+                    unit: '°C'
+                    interval: 1h
+                    points:
+                      - occurred_at: '2026-11-01T00:00:00Z'
+                        value: 20.8
+                      - occurred_at: '2026-11-01T01:00:00Z'
+                        value: 20.6
+                      - occurred_at: '2026-11-01T02:00:00Z'
+                        value: 20.9
+                raw:
+                  summary: Исходные показания
+                  value:
+                    device_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                    metric: temperature
+                    unit: '°C'
+                    interval: null
+                    points:
+                      - occurred_at: '2026-11-01T00:00:12Z'
+                        value: 20.7
+                      - occurred_at: '2026-11-01T00:01:12Z'
+                        value: 20.8
+        '400':
+          description: Некорректные параметры запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidPeriod:
+                  summary: Начало периода позже конца
+                  value:
+                    code: INVALID_PERIOD
+                    message: Параметр from должен быть раньше to
+                missingMetric:
+                  summary: Не указана метрика
+                  value:
+                    code: INVALID_REQUEST
+                    message: Параметр metric обязателен
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/DeviceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/RegistryUnavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      description: Идентификатор устройства
+      schema:
+        type: string
+        format: uuid
+      example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  schemas:
+    Reading:
+      type: object
+      required: [metric, value, unit, occurred_at]
+      properties:
+        metric:
+          type: string
+          description: Название метрики
+        value:
+          type: number
+          format: double
+        unit:
+          type: string
+          description: Единица измерения
+        occurred_at:
+          type: string
+          format: date-time
+          description: Момент измерения на устройстве
+    LatestReadings:
+      type: object
+      required: [device_id, readings]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        readings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reading'
+    ReadingPoint:
+      type: object
+      required: [occurred_at, value]
+      properties:
+        occurred_at:
+          type: string
+          format: date-time
+          description: Момент измерения или начало интервала усреднения
+        value:
+          type: number
+          format: double
+    ReadingsHistory:
+      type: object
+      required: [device_id, metric, unit, interval, points]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        metric:
+          type: string
+        unit:
+          type: string
+          nullable: true
+          description: Единица измерения. Если показаний нет, равна null
+        interval:
+          type: string
+          enum: [1m, 1h, 1d, null]
+          nullable: true
+          description: Интервал усреднения. Для исходных показаний равен null
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReadingPoint'
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки
+        message:
+          type: string
+          description: Описание ошибки
+  responses:
+    Unauthorized:
+      description: Токен отсутствует или недействителен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unauthorized:
+              summary: Нет действительного токена
+              value:
+                code: UNAUTHORIZED
+                message: Требуется авторизация
+    Forbidden:
+      description: Дом устройства не входит в список домов пользователя
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            forbidden:
+              summary: Чужое устройство
+              value:
+                code: FORBIDDEN
+                message: Нет доступа к этому устройству
+    DeviceNotFound:
+      description: Устройство не найдено
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            deviceNotFound:
+              summary: Неизвестное устройство
+              value:
+                code: DEVICE_NOT_FOUND
+                message: Устройство не найдено
+    RegistryUnavailable:
+      description: Сервис реестра устройств недоступен, устройство не удалось проверить
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            registryUnavailable:
+              summary: Реестр недоступен
+              value:
+                code: REGISTRY_UNAVAILABLE
+                message: Не удалось проверить устройство, повторите запрос
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            internalError:
+              summary: Внутренняя ошибка
+              value:
+                code: INTERNAL_ERROR
+                message: Внутренняя ошибка сервера
