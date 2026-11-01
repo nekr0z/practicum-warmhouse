@@ -25,7 +25,6 @@ package "БД пользователей" {
     entity "Home" as home {
         * id : uuid <<PK>>
         --
-        * owner_id : uuid <<FK>>
         * name : varchar
         address : varchar
         * timezone : varchar
@@ -39,6 +38,11 @@ package "БД пользователей" {
         * role : varchar
         * granted_at : timestamptz
     }
+
+    note bottom of home_access
+        Связь User и Home — M:N.
+        Владение: role = owner.
+    end note
 }
 
 package "БД реестра" {
@@ -156,7 +160,6 @@ package "БД сценариев" {
     }
 }
 
-user ||--o{ home : владеет
 user ||--o{ home_access
 home ||--o{ home_access
 
