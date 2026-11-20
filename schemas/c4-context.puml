@@ -1,0 +1,32 @@
+@startuml c4-context
+!includeurl https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Context.puml
+
+title Тёплый дом — диаграмма контекста
+
+Person(user, "Пользователь", "Владелец дома. Удалённо управляет отоплением и смотрит температуру")
+Person(installer, "Специалист по подключению", "Сотрудник компании. Выезжает на каждую установку")
+
+System(smart_home, "Умный дом (монолит)", "Go, PostgreSQL. Управление отоплением и мониторинг температуры")
+
+Boundary(home, "Дом 1…N (100 подключённых модулей)") {
+    System_Ext(heating_module, "Модуль управления отоплением", "Реле, установленное в доме")
+    System_Ext(sensor, "Датчик температуры", "Установлен в доме")
+    System_Ext(heating, "Система отопления", "Оборудование дома")
+}
+
+System_Ext(temperature_api, "Temperature API", "HTTP-интерфейс получения показаний датчиков")
+
+Rel(user, smart_home, "Включает и выключает отопление, смотрит температуру", "Web, HTTP, синхронно")
+Rel(installer, heating_module, "Устанавливает и подключает", "выезд")
+Rel(installer, sensor, "Устанавливает", "выезд")
+
+Rel(smart_home, heating_module, "Отправляет команды включения и выключения", "синхронно, сервер → устройство")
+Rel(smart_home, temperature_api, "Запрашивает текущую температуру", "HTTP GET, синхронно, таймаут 10 с")
+Rel(temperature_api, sensor, "Считывает показания", "по запросу")
+Rel(sensor, smart_home, "Регистрируется при включении")
+Rel(heating_module, heating, "Включает и выключает")
+
+Lay_R(heating_module, sensor)
+
+SHOW_LEGEND()
+@enduml

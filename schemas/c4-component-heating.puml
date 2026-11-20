@@ -1,0 +1,40 @@
+@startuml c4-component-heating
+!includeurl https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Сервис отопления — диаграмма компонентов
+
+Container(api_gateway, "API Gateway", "Kong", "Единая точка входа")
+Container(registry_service, "Сервис реестра устройств", "Python, FastAPI", "Устройства и их принадлежность")
+ContainerDb(heating_db, "БД отопления", "PostgreSQL", "Команды, состояние, outbox")
+ContainerQueue(kafka, "Брокер событий", "Apache Kafka", "Команды, результаты, действия сценариев")
+
+Container_Boundary(heating_service, "Сервис отопления") {
+    Component(heating_api, "Heating API", "Python, FastAPI", "Приём команд и чтение состояния")
+    Component(command_handler, "Обработчик команд", "Python", "Проверяет запрос и создаёт команду")
+    Component(device_client, "Клиент реестра", "Python", "Проверяет устройство, кэширует ответ")
+    Component(state_manager, "Менеджер состояния", "Python", "Хранит ожидаемое и подтверждённое состояние")
+    Component(result_consumer, "Обработчик результатов", "Python", "Завершает команды и обновляет состояние")
+    Component(action_consumer, "Обработчик действий сценариев", "Python", "Превращает действия сценариев в команды")
+    Component(timeout_worker, "Контроль таймаутов", "Python", "Завершает команды без ответа")
+    Component(outbox_publisher, "Outbox Publisher", "Python", "Надёжно публикует команды")
+    Component(heating_repository, "Репозиторий", "Python, SQLAlchemy", "Команды, состояние и outbox в одной транзакции")
+}
+
+Rel(api_gateway, heating_api, "Команды и состояние", "REST")
+Rel(heating_api, command_handler, "Передаёт команду")
+Rel(heating_api, state_manager, "Читает состояние")
+Rel(command_handler, device_client, "Проверяет устройство")
+Rel(device_client, registry_service, "Получает устройство", "REST")
+Rel(command_handler, heating_repository, "Сохраняет команду и outbox")
+Rel(kafka, action_consumer, "scenario.actions", "Kafka")
+Rel(action_consumer, command_handler, "Передаёт команду")
+Rel(kafka, result_consumer, "device.command-results", "Kafka")
+Rel(result_consumer, state_manager, "Обновляет состояние")
+Rel(timeout_worker, state_manager, "Завершает просроченные команды")
+Rel(state_manager, heating_repository, "Читает и пишет")
+Rel(heating_repository, heating_db, "Читает и пишет", "SQL")
+Rel(outbox_publisher, heating_db, "Читает outbox", "SQL")
+Rel(outbox_publisher, kafka, "device.commands", "Kafka")
+
+SHOW_LEGEND()
+@enduml

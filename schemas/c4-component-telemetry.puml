@@ -1,0 +1,33 @@
+@startuml c4-component-telemetry
+!includeurl https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+
+title Сервис телеметрии — диаграмма компонентов
+
+Container(api_gateway, "API Gateway", "Kong", "Единая точка входа")
+Container(registry_service, "Сервис реестра устройств", "Python, FastAPI", "Устройства и их принадлежность")
+ContainerQueue(kafka, "Брокер событий", "Apache Kafka", "device.telemetry")
+ContainerDb(telemetry_db, "БД телеметрии", "TimescaleDB", "Временные ряды показаний")
+
+Container_Boundary(telemetry_service, "Сервис телеметрии") {
+    Component(telemetry_consumer, "Обработчик показаний", "Go, kafka-go", "Читает показания группами")
+    Component(reading_validator, "Проверка показаний", "Go", "Отбрасывает некорректные показания и дубликаты, приводит единицы измерения")
+    Component(batch_writer, "Пакетная запись", "Go", "Записывает показания пакетами")
+    Component(telemetry_api, "Telemetry API", "Go, Gin", "Текущие значения и история за период")
+    Component(query_service, "Сервис запросов", "Go", "Проверяет доступ по дому из JWT, выбирает агрегаты по периоду")
+    Component(device_client, "Клиент реестра", "Go", "Определяет дом устройства, кэширует ответ")
+    Component(telemetry_repository, "Репозиторий", "Go, pgx", "Доступ к данным")
+}
+
+Rel(kafka, telemetry_consumer, "device.telemetry", "Kafka")
+Rel(telemetry_consumer, reading_validator, "Передаёт показания")
+Rel(reading_validator, batch_writer, "Передаёт корректные показания")
+Rel(batch_writer, telemetry_repository, "Пишет")
+Rel(api_gateway, telemetry_api, "Запрашивает показания", "REST")
+Rel(telemetry_api, query_service, "Вызывает")
+Rel(query_service, device_client, "Проверяет устройство")
+Rel(device_client, registry_service, "Получает устройство", "REST")
+Rel(query_service, telemetry_repository, "Читает")
+Rel(telemetry_repository, telemetry_db, "Читает и пишет", "SQL")
+
+SHOW_LEGEND()
+@enduml

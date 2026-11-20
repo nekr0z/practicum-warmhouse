@@ -1,0 +1,160 @@
+@startuml c4-code-heating-command
+title Сервис отопления — обработка команды (диаграмма классов)
+
+skinparam classAttributeIconSize 0
+hide empty members
+
+class HeatingApi {
+    -commands: CommandHandler
+    -state: StateManager
+    +async create_command(body: CommandBody, user: User) -> CommandResponse
+    +async get_command(command_id: UUID) -> CommandResponse
+    +async get_state(device_id: str) -> StateResponse
+}
+
+class ActionConsumer {
+    -consumer: AIOKafkaConsumer
+    -commands: CommandHandler
+    +async run() -> None
+}
+
+class CommandHandler {
+    -devices: DeviceClient
+    -repository: CommandRepository
+    -command_ttl: timedelta
+    +async create(request: CreateCommandRequest) -> Command
+}
+
+class CreateCommandRequest <<dataclass>> {
+    +device_id: str
+    +action: Action
+    +idempotency_key: str
+    +allowed_home_ids: list[str]
+}
+
+interface DeviceClient <<Protocol>> {
+    +async get_device(device_id: str) -> Device
+}
+
+class RegistryClient {
+    -http_client: httpx.AsyncClient
+    -cache: TTLCache
+    +async get_device(device_id: str) -> Device
+}
+
+class Device <<dataclass>> {
+    +id: str
+    +home_id: str
+    +type: str
+    +protocol: str
+    +status: str
+}
+
+interface CommandRepository <<Protocol>> {
+    +async find_by_id(command_id: UUID) -> Command | None
+    +async find_by_idempotency_key(key: str) -> Command | None
+    +async save_with_outbox(command: Command) -> None
+    +async find_expired(now: datetime) -> list[Command]
+    +async finish(command: Command, state: HeatingState) -> None
+    +async get_state(device_id: str) -> HeatingState | None
+}
+
+class SqlAlchemyCommandRepository {
+    -session_factory: async_sessionmaker
+    +async find_by_id(command_id: UUID) -> Command | None
+    +async find_by_idempotency_key(key: str) -> Command | None
+    +async save_with_outbox(command: Command) -> None
+    +async find_expired(now: datetime) -> list[Command]
+    +async finish(command: Command, state: HeatingState) -> None
+    +async get_state(device_id: str) -> HeatingState | None
+}
+
+class StateManager {
+    -repository: CommandRepository
+    +async get_command(command_id: UUID) -> Command
+    +async get_state(device_id: str) -> HeatingState
+    +async apply_result(result: CommandResult) -> None
+    +async expire_commands(now: datetime) -> None
+}
+
+class ResultConsumer {
+    -consumer: AIOKafkaConsumer
+    -state: StateManager
+    +async run() -> None
+}
+
+class TimeoutWorker {
+    -state: StateManager
+    -interval: timedelta
+    +async run() -> None
+}
+
+class Command <<dataclass>> {
+    +id: UUID
+    +device_id: str
+    +action: Action
+    +status: CommandStatus
+    +idempotency_key: str
+    +expires_at: datetime
+    +is_expired(now: datetime) -> bool
+    +finish(status: CommandStatus) -> None
+}
+
+class HeatingState <<dataclass>> {
+    +device_id: str
+    +desired: Action
+    +reported: Action | None
+    +updated_at: datetime
+}
+
+class CommandResult <<dataclass>> {
+    +command_id: UUID
+    +status: CommandStatus
+    +occurred_at: datetime
+}
+
+enum Action {
+    TURN_ON
+    TURN_OFF
+}
+
+enum CommandStatus {
+    PENDING
+    SUCCEEDED
+    FAILED
+    EXPIRED
+    TIMED_OUT
+}
+
+HeatingApi --> CommandHandler
+ActionConsumer --> CommandHandler
+HeatingApi --> StateManager
+ResultConsumer --> StateManager
+TimeoutWorker --> StateManager
+
+CommandHandler --> DeviceClient
+CommandHandler --> CommandRepository
+CommandHandler ..> CreateCommandRequest
+StateManager --> CommandRepository
+StateManager ..> CommandResult
+DeviceClient <|.. RegistryClient
+DeviceClient ..> Device
+CommandRepository <|.. SqlAlchemyCommandRepository
+CommandRepository ..> Command
+CommandRepository ..> HeatingState
+Command --> Action
+Command --> CommandStatus
+
+note right of CommandHandler
+    Повтор с тем же idempotency_key возвращает уже
+    созданную команду. Дом устройства должен входить
+    в allowed_home_ids, иначе запрос отклоняется.
+end note
+
+note bottom of CommandRepository
+    save_with_outbox записывает команду и сообщение outbox
+    в одной транзакции. finish завершает команду только
+    из статуса PENDING, поэтому повторный результат
+    ничего не меняет.
+end note
+@enduml

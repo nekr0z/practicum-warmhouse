@@ -1,0 +1,105 @@
+@startuml c4-container
+!includeurl https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Container.puml
+
+title Тёплый дом — диаграмма контейнеров (To-Be)
+
+Person(user, "Пользователь", "Сам подключает устройства, управляет домом, настраивает сценарии и смотрит телеметрию")
+
+System_Ext(billing, "Биллинг и магазин комплектов", "Готовое решение: комплекты и подписки")
+
+System_Boundary(ecosystem, "Экосистема «Тёплый дом»") {
+    Container(web, "Веб-приложение", "TypeScript, React", "Интерфейс самообслуживания")
+    Container(api_gateway, "API Gateway", "Kong", "Единая точка входа: маршрутизация, проверка JWT, ограничение запросов")
+
+    Container(user_service, "Сервис пользователей и домов", "Go", "Учётные записи, дома, права доступа")
+    ContainerDb(user_db, "БД пользователей", "PostgreSQL", "Пользователи, дома, доступы")
+
+    Container(registry_service, "Сервис реестра устройств", "Python, FastAPI", "Устройства, каталог типов, самостоятельная привязка к дому")
+    ContainerDb(registry_db, "БД реестра", "PostgreSQL", "Устройства, типы, статусы")
+
+    Boundary(control, "Управление устройствами") {
+        Container(heating_service, "Сервис отопления", "Python, FastAPI", "Команды и состояние отопления")
+        ContainerDb(heating_db, "БД отопления", "PostgreSQL", "Команды, состояние, outbox")
+        Container(lighting_service, "Сервис освещения", "Go", "Команды и состояние света")
+        ContainerDb(lighting_db, "БД освещения", "PostgreSQL", "Команды, состояние, outbox")
+        Container(gate_service, "Сервис ворот", "Go", "Команды, проверки безопасности, аудит")
+        ContainerDb(gate_db, "БД ворот", "PostgreSQL", "Команды, состояние, аудит, outbox")
+    }
+
+    Container(surveillance_service, "Сервис видеонаблюдения", "Go", "Камеры и сессии просмотра")
+    ContainerDb(surveillance_db, "БД видеонаблюдения", "PostgreSQL", "Камеры, сессии")
+    Container(media_server, "Медиасервер", "MediaMTX", "Принимает и раздаёт видеопотоки")
+
+    Container(telemetry_service, "Сервис телеметрии", "Go", "Приём показаний, текущие значения, история")
+    ContainerDb(telemetry_db, "БД телеметрии", "TimescaleDB", "Временные ряды показаний")
+
+    Container(automation_service, "Сервис сценариев", "Go", "Правила «условие — действие»")
+    ContainerDb(automation_db, "БД сценариев", "PostgreSQL", "Сценарии, журнал запусков, outbox")
+
+    ContainerQueue(kafka, "Брокер событий", "Apache Kafka", "device.commands, device.command-results, device.telemetry, device.events, scenario.actions")
+
+    Container(device_gateway, "Шлюз устройств", "Go", "Адаптеры протоколов, единый внутренний формат сообщений")
+    ContainerQueue(mqtt, "MQTT-брокер", "EMQX", "Постоянное исходящее соединение от устройств")
+
+    Container(monolith, "Монолит «Умный дом»", "Go", "Работает на время миграции, функции выносятся по частям")
+    ContainerDb(monolith_db, "БД монолита", "PostgreSQL", "Таблица sensors")
+}
+
+System_Ext(temperature_api, "Temperature API", "Источник показаний подключённых сейчас датчиков")
+
+Boundary(home, "Дом 1…N") {
+    System_Ext(device, "Умные устройства", "Датчики, реле, свет, ворота, устройства партнёров")
+    System_Ext(camera, "Камеры", "Источники видео")
+}
+
+Rel(user, web, "Работает в браузере", "HTTPS")
+Rel(user, media_server, "Смотрит видео", "WebRTC")
+Rel(web, api_gateway, "Вызывает API", "REST, HTTPS")
+
+Rel(api_gateway, user_service, "Вход, дома", "REST")
+Rel(api_gateway, registry_service, "Устройства", "REST")
+Rel(api_gateway, heating_service, "Команды", "REST")
+Rel(api_gateway, lighting_service, "Команды", "REST")
+Rel(api_gateway, gate_service, "Команды", "REST")
+Rel(api_gateway, surveillance_service, "Сессии просмотра", "REST")
+Rel(api_gateway, telemetry_service, "Показания", "REST")
+Rel(api_gateway, automation_service, "Сценарии", "REST")
+Rel(api_gateway, monolith, "Ещё не вынесенные запросы", "REST")
+
+Rel(user_service, user_db, "Читает и пишет", "SQL")
+Rel(registry_service, registry_db, "Читает и пишет", "SQL")
+Rel(heating_service, heating_db, "Читает и пишет", "SQL")
+Rel(lighting_service, lighting_db, "Читает и пишет", "SQL")
+Rel(gate_service, gate_db, "Читает и пишет", "SQL")
+Rel(surveillance_service, surveillance_db, "Читает и пишет", "SQL")
+Rel(telemetry_service, telemetry_db, "Читает и пишет", "SQL")
+Rel(automation_service, automation_db, "Читает и пишет", "SQL")
+Rel(monolith, monolith_db, "Читает и пишет", "SQL")
+
+Rel(user_service, billing, "Проверяет подписку", "REST")
+Rel(heating_service, registry_service, "Проверяет устройство", "REST")
+Rel(lighting_service, registry_service, "Проверяет устройство", "REST")
+Rel(gate_service, registry_service, "Проверяет устройство", "REST")
+Rel(surveillance_service, registry_service, "Проверяет камеру", "REST")
+Rel(telemetry_service, registry_service, "Проверяет устройство", "REST")
+Rel(automation_service, registry_service, "Проверяет устройства сценария", "REST")
+Rel(monolith, registry_service, "Передаёт изменения датчиков", "REST")
+Rel(surveillance_service, media_server, "Открывает и закрывает сессии", "REST")
+
+Rel(registry_service, kafka, "Публикует и читает device.events", "Kafka")
+Rel(heating_service, kafka, "Команды, результаты, scenario.actions", "Kafka")
+Rel(lighting_service, kafka, "Команды, результаты, scenario.actions", "Kafka")
+Rel(gate_service, kafka, "Команды, результаты, scenario.actions", "Kafka")
+Rel(kafka, telemetry_service, "device.telemetry", "Kafka")
+Rel(automation_service, kafka, "Читает события, публикует scenario.actions", "Kafka")
+BiRel(kafka, device_gateway, "Команды для устройств; показания, события, результаты", "Kafka")
+
+BiRel(device_gateway, mqtt, "Сообщения устройств и команды", "MQTT")
+BiRel(device_gateway, device, "Сообщения и команды устройств партнёров", "HTTPS")
+Rel(device_gateway, temperature_api, "Опрашивает на время миграции", "REST")
+Rel(monolith, temperature_api, "Запрашивает температуру", "REST")
+Rel_U(device, mqtt, "Показания, статус, результаты команд", "MQTT, TLS")
+Rel_U(camera, media_server, "Передаёт видео", "RTSP, TLS")
+
+SHOW_LEGEND()
+@enduml
